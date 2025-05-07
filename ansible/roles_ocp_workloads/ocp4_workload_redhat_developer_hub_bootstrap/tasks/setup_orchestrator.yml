@@ -38,6 +38,15 @@
       install_operator_catalogsource_image_tag: "{{
        ocp4_workload_redhat_developer_hub_bootstrap_orchestrator_catalog_image_tag }}"
 
+- name: Get orchestorator API version
+  shell: |
+    oc get crd orchestrators.rhdh.redhat.com -o json | -r jq .spec.versions[0].name
+  register: r_orch_api_version
+
+- name: Set orchestrator API version to fact
+  ansible.builtin.set_fact:
+    ocp4_workload_redhat_developer_hub_bootstrap_orchestrator_api_version: "{{ r_orch_api_version.stdout }}"
+
 - name: Install Orchestrator
   kubernetes.core.k8s:
     state: present
