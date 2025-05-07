@@ -40,7 +40,7 @@
 
 - name: Get orchestorator API version
   shell: |
-    oc get crd orchestrators.rhdh.redhat.com -o json | -r jq .spec.versions[0].name
+    oc get crd orchestrators.rhdh.redhat.com -o json | jq -r .spec.versions[0].name
   register: r_orch_api_version
 
 - name: Set orchestrator API version to fact
