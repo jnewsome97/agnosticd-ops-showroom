@@ -8,3 +8,7 @@ GUID={{ guid }}
 ROUTE_SUBDOMAIN={{ route_subdomain }}
 HOME_PATH=/opt/app-root/src
 ENVIRONMENT=Amazon Web Services
+MODULE_ENABLE_VIRT={{ module_enable_virt | default(true) | string | lower }}
+MODULE_ENABLE_ACM={{ module_enable_acm | default(true) | string | lower }}
+MODULE_ENABLE_BACKUP={{ module_enable_backup | default(true) | string | lower }}
+MODULE_ENABLE_DEVHUB={{ module_enable_devhub | default(true) | string | lower }}
