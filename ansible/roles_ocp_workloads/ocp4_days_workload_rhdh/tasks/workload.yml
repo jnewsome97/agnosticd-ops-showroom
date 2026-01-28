@@ -136,6 +136,24 @@
     msg: "Red Hat Developer Hub is available at: {{ ocp4_days_workload_rhdh_url | default('URL not available') }}"
   when: not silent | bool
 
+# Create console link for app launcher
+- name: Create ConsoleLink for Developer Hub
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: console.openshift.io/v1
+      kind: ConsoleLink
+      metadata:
+        name: developer-hub
+      spec:
+        applicationMenu:
+          section: Red Hat Applications
+          imageURL: 'https://raw.githubusercontent.com/backstage/backstage/master/microsite/static/img/logo.svg'
+        href: "{{ ocp4_days_workload_rhdh_url }}"
+        location: ApplicationMenu
+        text: Red Hat Developer Hub
+  when: r_backstage_route.resources | length > 0
+
 - name: Workload tasks complete
   debug:
     msg: "Red Hat Developer Hub deployed successfully"
