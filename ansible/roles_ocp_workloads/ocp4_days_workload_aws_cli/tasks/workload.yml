@@ -1,0 +1,194 @@
+---
+# Implement AWS CLI installation and credential configuration
+# This workload supports two modes:
+# 1. Bastion mode (wetty terminal) - installs on bastion host
+# 2. Showroom pod mode - execs into showroom pod to install
+
+- name: Setting up AWS CLI workload
+  debug:
+    msg: "Setting up AWS CLI for user {{ student_name | default('lab-user') }}"
+
+# =============================================================================
+# BASTION MODE: Install on bastion host (for wetty terminal)
+# =============================================================================
+- name: Install AWS CLI on bastion (wetty terminal mode)
+  when: ocp4_days_workload_aws_cli_bastion_mode | default(true) | bool
+  block:
+    - name: Get awscli bundle
+      get_url:
+        url: https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
+        dest: /tmp/awscliv2.zip
+        mode: '0644'
+
+    - name: Create temp directory for awscli
+      file:
+        path: /tmp/awscli-install
+        state: directory
+        mode: '0755'
+
+    - name: Unzip awscliv2.zip
+      unarchive:
+        src: /tmp/awscliv2.zip
+        dest: /tmp/awscli-install/
+        remote_src: true
+
+    - name: Install awscli
+      become: true
+      command: /tmp/awscli-install/aws/install --update
+      args:
+        creates: /usr/local/bin/aws
+
+    - name: Cleanup archive and tmp files
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/awscli-install
+        - /tmp/awscliv2.zip
+
+    - name: Verify AWS CLI installation
+      command: /usr/local/bin/aws --version
+      register: r_aws_version
+      changed_when: false
+
+    - name: Display AWS CLI version
+      debug:
+        msg: "AWS CLI installed: {{ r_aws_version.stdout }}"
+
+# =============================================================================
+# CONFIGURE AWS CREDENTIALS
+# =============================================================================
+- name: Configure AWS credentials for {{ student_name }}
+  become_user: "{{ student_name }}"
+  become: true
+  when:
+    - sandbox_aws_access_key_id | default('') | length > 0
+    - sandbox_aws_secret_access_key | default('') | length > 0
+  block:
+    - name: Create .aws directory
+      file:
+        path: "~/.aws"
+        state: directory
+        mode: '0700'
+
+    - name: Add AWS credentials
+      no_log: true
+      copy:
+        dest: "~/.aws/credentials"
+        mode: '0600'
+        content: |
+          [default]
+          aws_access_key_id={{ sandbox_aws_access_key_id }}
+          aws_secret_access_key={{ sandbox_aws_secret_access_key }}
+
+    - name: Add AWS config
+      copy:
+        dest: "~/.aws/config"
+        mode: '0600'
+        content: |
+          [default]
+          region={{ ocp4_days_workload_aws_cli_region }}
+          output=json
+
+    - name: Verify AWS credentials
+      command: /usr/local/bin/aws sts get-caller-identity
+      register: r_aws_identity
+      changed_when: false
+      ignore_errors: true
+
+    - name: Display AWS identity
+      debug:
+        msg: "AWS identity: {{ r_aws_identity.stdout | default('Could not verify') }}"
+      when: r_aws_identity.rc == 0
+
+# =============================================================================
+# SHOWROOM POD MODE: Exec into showroom pod to install (alternative)
+# =============================================================================
+- name: Install AWS CLI in showroom pod (container mode)
+  when: ocp4_days_workload_aws_cli_pod_mode | default(false) | bool
+  block:
+    - name: Get showroom pod name
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ ocp4_days_workload_aws_cli_showroom_namespace }}"
+        label_selectors:
+          - app.kubernetes.io/name=showroom
+      register: r_showroom_pods
+
+    - name: Try alternative label if primary not found
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ ocp4_days_workload_aws_cli_showroom_namespace }}"
+        label_selectors:
+          - app=showroom
+      register: r_showroom_pods_alt
+      when: r_showroom_pods.resources | length == 0
+
+    - name: Set showroom pod name
+      set_fact:
+        _showroom_pod_name: >-
+          {{ (r_showroom_pods.resources | default([]))[0].metadata.name
+             if r_showroom_pods.resources | default([]) | length > 0
+             else (r_showroom_pods_alt.resources | default([]))[0].metadata.name
+             if r_showroom_pods_alt.resources | default([]) | length > 0
+             else '' }}
+      when: (r_showroom_pods.resources | default([]) | length > 0) or
+            (r_showroom_pods_alt.resources | default([]) | length > 0)
+
+    - name: Warn if showroom pod not found
+      debug:
+        msg: "WARNING: Could not find showroom pod in namespace {{ ocp4_days_workload_aws_cli_showroom_namespace }}. Skipping AWS CLI configuration."
+      when: _showroom_pod_name | default('') | length == 0
+
+    - name: Install AWS CLI in showroom pod
+      kubernetes.core.k8s_exec:
+        namespace: "{{ ocp4_days_workload_aws_cli_showroom_namespace }}"
+        pod: "{{ _showroom_pod_name }}"
+        container: terminal
+        command: >-
+          bash -c '
+          if ! command -v aws &> /dev/null; then
+            cd /tmp &&
+            curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" &&
+            unzip -q awscliv2.zip &&
+            ./aws/install -i ~/.local/aws-cli -b ~/.local/bin &&
+            rm -rf awscliv2.zip aws &&
+            echo "export PATH=\$PATH:~/.local/bin" >> ~/.bashrc
+          fi
+          '
+      when: _showroom_pod_name | default('') | length > 0
+
+    - name: Configure AWS credentials in showroom pod
+      kubernetes.core.k8s_exec:
+        namespace: "{{ ocp4_days_workload_aws_cli_showroom_namespace }}"
+        pod: "{{ _showroom_pod_name }}"
+        container: terminal
+        command: >-
+          bash -c '
+          mkdir -p ~/.aws &&
+          cat > ~/.aws/credentials << EOF
+          [default]
+          aws_access_key_id={{ sandbox_aws_access_key_id }}
+          aws_secret_access_key={{ sandbox_aws_secret_access_key }}
+          EOF
+          chmod 600 ~/.aws/credentials &&
+          cat > ~/.aws/config << EOF
+          [default]
+          region={{ ocp4_days_workload_aws_cli_region }}
+          output=json
+          EOF
+          chmod 600 ~/.aws/config
+          '
+      when:
+        - _showroom_pod_name | default('') | length > 0
+        - sandbox_aws_access_key_id | default('') | length > 0
+        - sandbox_aws_secret_access_key | default('') | length > 0
+      no_log: true
+
+# Leave this as the last task in the playbook
+- name: Workload tasks complete
+  debug:
+    msg: "AWS CLI Workload Tasks completed successfully."
+  when: not silent | bool
