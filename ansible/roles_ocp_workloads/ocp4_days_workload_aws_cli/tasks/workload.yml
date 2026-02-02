@@ -189,6 +189,25 @@
         - _showroom_pod_name | default('') | length > 0
         - _showroom_container_name | default('') | length > 0
 
+    # Wait for the pod to be ready before trying to exec
+    - name: Wait for showroom pod to be ready
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ ocp4_days_workload_aws_cli_showroom_namespace }}"
+        name: "{{ _showroom_pod_name }}"
+      register: r_showroom_pod_status
+      until:
+        - r_showroom_pod_status.resources | length > 0
+        - r_showroom_pod_status.resources[0].status.phase == 'Running'
+        - r_showroom_pod_status.resources[0].status.containerStatuses is defined
+        - r_showroom_pod_status.resources[0].status.containerStatuses | selectattr('name', 'equalto', _showroom_container_name) | selectattr('ready', 'equalto', true) | list | length > 0
+      retries: 30
+      delay: 10
+      when:
+        - _showroom_pod_name | default('') | length > 0
+        - _showroom_container_name | default('') | length > 0
+
     - name: Install AWS CLI in showroom pod
       kubernetes.core.k8s_exec:
         namespace: "{{ ocp4_days_workload_aws_cli_showroom_namespace }}"
