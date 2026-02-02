@@ -219,14 +219,15 @@
             cd /tmp &&
             curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" &&
             unzip -q awscliv2.zip &&
-            ./aws/install -i ~/.local/aws-cli -b ~/.local/bin &&
+            ./aws/install -i /tmp/aws-cli -b /tmp/bin &&
             rm -rf awscliv2.zip aws &&
-            echo "export PATH=\$PATH:~/.local/bin" >> ~/.bashrc
+            echo "AWS CLI installed to /tmp/bin - add to PATH with: export PATH=\$PATH:/tmp/bin"
           fi
           '
       when:
         - _showroom_pod_name | default('') | length > 0
         - _showroom_container_name | default('') | length > 0
+      ignore_errors: true
 
     - name: Configure AWS credentials in showroom pod
       kubernetes.core.k8s_exec:
@@ -234,21 +235,25 @@
         pod: "{{ _showroom_pod_name }}"
         container: "{{ _showroom_container_name }}"
         command: >-
-          bash -c 'mkdir -p ~/.aws &&
-          echo "[default]" > ~/.aws/credentials &&
-          echo "aws_access_key_id={{ sandbox_aws_access_key_id }}" >> ~/.aws/credentials &&
-          echo "aws_secret_access_key={{ sandbox_aws_secret_access_key }}" >> ~/.aws/credentials &&
-          chmod 600 ~/.aws/credentials &&
-          echo "[default]" > ~/.aws/config &&
-          echo "region={{ ocp4_days_workload_aws_cli_region }}" >> ~/.aws/config &&
-          echo "output=json" >> ~/.aws/config &&
-          chmod 600 ~/.aws/config'
+          bash -c 'mkdir -p /tmp/.aws &&
+          echo "[default]" > /tmp/.aws/credentials &&
+          echo "aws_access_key_id={{ sandbox_aws_access_key_id }}" >> /tmp/.aws/credentials &&
+          echo "aws_secret_access_key={{ sandbox_aws_secret_access_key }}" >> /tmp/.aws/credentials &&
+          chmod 600 /tmp/.aws/credentials &&
+          echo "[default]" > /tmp/.aws/config &&
+          echo "region={{ ocp4_days_workload_aws_cli_region }}" >> /tmp/.aws/config &&
+          echo "output=json" >> /tmp/.aws/config &&
+          chmod 600 /tmp/.aws/config &&
+          echo "export AWS_CONFIG_FILE=/tmp/.aws/config" > /tmp/aws-env.sh &&
+          echo "export AWS_SHARED_CREDENTIALS_FILE=/tmp/.aws/credentials" >> /tmp/aws-env.sh &&
+          chmod 755 /tmp/aws-env.sh'
       when:
         - _showroom_pod_name | default('') | length > 0
         - _showroom_container_name | default('') | length > 0
         - sandbox_aws_access_key_id | default('') | length > 0
         - sandbox_aws_secret_access_key | default('') | length > 0
       no_log: true
+      ignore_errors: true
 
 # Leave this as the last task in the playbook
 - name: Workload tasks complete
