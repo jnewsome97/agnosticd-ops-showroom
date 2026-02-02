@@ -115,6 +115,13 @@
 - name: Install AWS CLI in showroom pod (container mode)
   when: ocp4_days_workload_aws_cli_pod_mode | default(false) | bool
   block:
+    - name: Debug - Starting pod mode configuration
+      debug:
+        msg: |
+          Starting AWS CLI pod mode configuration
+          Namespace: {{ ocp4_days_workload_aws_cli_showroom_namespace }}
+          AWS credentials provided: {{ (sandbox_aws_access_key_id | default('') | length > 0) | ternary('Yes', 'No') }}
+
     # Create a Kubernetes Secret with AWS credentials
     - name: Create AWS credentials secret
       kubernetes.core.k8s:
@@ -139,6 +146,12 @@
         - sandbox_aws_access_key_id | default('') | length > 0
         - sandbox_aws_secret_access_key | default('') | length > 0
       no_log: true
+      register: r_secret_create
+
+    - name: Debug - Secret creation result
+      debug:
+        msg: "AWS credentials secret created/updated: {{ r_secret_create.changed | default(false) }}"
+      when: r_secret_create is defined
 
     # Get the showroom deployment by name
     - name: Get showroom deployment
@@ -149,23 +162,39 @@
         name: showroom
       register: r_showroom_deployment
 
+    - name: Debug - Deployment lookup result
+      debug:
+        msg: |
+          Deployment found: {{ r_showroom_deployment.resources | length > 0 }}
+          Number of deployments: {{ r_showroom_deployment.resources | length }}
+
+    - name: Fail if showroom deployment not found
+      fail:
+        msg: "ERROR: Showroom deployment not found in namespace {{ ocp4_days_workload_aws_cli_showroom_namespace }}"
+      when: r_showroom_deployment.resources | length == 0
+
     - name: Set deployment facts
       set_fact:
-        _showroom_deployment_name: "{{ r_showroom_deployment.resources[0].metadata.name if r_showroom_deployment.resources | length > 0 else '' }}"
+        _showroom_deployment_name: "{{ r_showroom_deployment.resources[0].metadata.name }}"
         _existing_volumes: "{{ r_showroom_deployment.resources[0].spec.template.spec.volumes | default([]) | map(attribute='name') | list }}"
-        _deployment_spec: "{{ r_showroom_deployment.resources[0] if r_showroom_deployment.resources | length > 0 else {} }}"
-      when: r_showroom_deployment.resources | length > 0
+        _deployment_spec: "{{ r_showroom_deployment.resources[0] }}"
+        _container_names: "{{ r_showroom_deployment.resources[0].spec.template.spec.containers | map(attribute='name') | list }}"
 
-    - name: Debug deployment info
+    - name: Debug - Deployment details
       debug:
-        msg: "Found showroom deployment: {{ _showroom_deployment_name }}"
-      when: _showroom_deployment_name | default('') | length > 0
+        msg: |
+          Deployment name: {{ _showroom_deployment_name }}
+          Existing volumes: {{ _existing_volumes | join(', ') }}
+          Container names: {{ _container_names | join(', ') }}
 
     # Check if volume already exists
     - name: Check if aws-credentials volume already exists
       set_fact:
         _volume_exists: "{{ 'aws-credentials' in _existing_volumes }}"
-      when: _showroom_deployment_name | default('') | length > 0
+
+    - name: Debug - Volume check
+      debug:
+        msg: "aws-credentials volume already exists: {{ _volume_exists }}"
 
     # Add volume only if it doesn't exist
     - name: Add AWS credentials volume to deployment
@@ -183,10 +212,13 @@
                 secretName: aws-credentials
                 defaultMode: 420
       when:
-        - _showroom_deployment_name | default('') | length > 0
         - sandbox_aws_access_key_id | default('') | length > 0
-        - not _volume_exists | default(false)
+        - not _volume_exists
       register: r_volume_patch
+
+    - name: Debug - Volume patch result
+      debug:
+        msg: "Volume patch applied: {{ r_volume_patch.changed | default('skipped - volume exists') }}"
 
     # Find the terminal container index
     - name: Find terminal container index
@@ -196,18 +228,34 @@
       loop: "{{ _deployment_spec.spec.template.spec.containers | default([]) }}"
       loop_control:
         index_var: idx
-      when:
-        - _showroom_deployment_name | default('') | length > 0
-        - item.name == 'terminal'
+      when: item.name == 'terminal'
+
+    - name: Fail if terminal container not found
+      fail:
+        msg: |
+          ERROR: Terminal container not found in showroom deployment.
+          Available containers: {{ _container_names | join(', ') }}
+      when: _terminal_container_index is not defined
+
+    - name: Debug - Terminal container info
+      debug:
+        msg: |
+          Terminal container found at index: {{ _terminal_container_index }}
+          Container name: {{ _terminal_container.name }}
+          Existing volume mounts: {{ _terminal_container.volumeMounts | default([]) | map(attribute='name') | list | join(', ') }}
+          Existing env vars: {{ _terminal_container.env | default([]) | map(attribute='name') | list | join(', ') }}
 
     # Check if volume mount already exists
     - name: Check if aws-credentials volume mount already exists
       set_fact:
         _mount_exists: "{{ _terminal_container.volumeMounts | default([]) | selectattr('name', 'equalto', 'aws-credentials') | list | length > 0 }}"
         _env_config_exists: "{{ _terminal_container.env | default([]) | selectattr('name', 'equalto', 'AWS_CONFIG_FILE') | list | length > 0 }}"
-      when:
-        - _terminal_container_index is defined
-        - _terminal_container is defined
+
+    - name: Debug - Mount and env check
+      debug:
+        msg: |
+          Volume mount exists: {{ _mount_exists }}
+          AWS env vars exist: {{ _env_config_exists }}
 
     # Add volume mount only if it doesn't exist
     - name: Add volume mount to terminal container
@@ -224,11 +272,13 @@
               mountPath: /opt/aws
               readOnly: true
       when:
-        - _showroom_deployment_name | default('') | length > 0
-        - _terminal_container_index is defined
         - sandbox_aws_access_key_id | default('') | length > 0
-        - not _mount_exists | default(false)
+        - not _mount_exists
       register: r_mount_patch
+
+    - name: Debug - Mount patch result
+      debug:
+        msg: "Volume mount patch applied: {{ r_mount_patch.changed | default('skipped - mount exists') }}"
 
     # Add env vars only if they don't exist
     - name: Add AWS environment variables to terminal container
@@ -249,11 +299,23 @@
               name: AWS_SHARED_CREDENTIALS_FILE
               value: /opt/aws/credentials
       when:
-        - _showroom_deployment_name | default('') | length > 0
-        - _terminal_container_index is defined
         - sandbox_aws_access_key_id | default('') | length > 0
-        - not _env_config_exists | default(false)
+        - not _env_config_exists
       register: r_env_patch
+
+    - name: Debug - Env patch result
+      debug:
+        msg: "Environment variables patch applied: {{ r_env_patch.changed | default('skipped - env vars exist') }}"
+
+    - name: Debug - Summary of changes
+      debug:
+        msg: |
+          Changes summary:
+          - Secret created/updated: {{ r_secret_create.changed | default(false) }}
+          - Volume added: {{ r_volume_patch.changed | default(false) }}
+          - Mount added: {{ r_mount_patch.changed | default(false) }}
+          - Env vars added: {{ r_env_patch.changed | default(false) }}
+          - Deployment rollout needed: {{ r_volume_patch.changed | default(false) or r_mount_patch.changed | default(false) or r_env_patch.changed | default(false) }}
 
     # Wait for deployment rollout only if changes were made
     - name: Wait for deployment rollout
@@ -268,17 +330,46 @@
         - r_deployment_status.resources[0].status.readyReplicas == r_deployment_status.resources[0].status.replicas
       retries: 30
       delay: 10
-      when:
-        - _showroom_deployment_name | default('') | length > 0
-        - _terminal_container_index is defined
-        - r_volume_patch.changed | default(false) or r_mount_patch.changed | default(false) or r_env_patch.changed | default(false)
+      when: r_volume_patch.changed | default(false) or r_mount_patch.changed | default(false) or r_env_patch.changed | default(false)
+
+    - name: Debug - Deployment rollout status
+      debug:
+        msg: |
+          Deployment rollout complete
+          Ready replicas: {{ r_deployment_status.resources[0].status.readyReplicas | default('N/A') }}
+          Total replicas: {{ r_deployment_status.resources[0].status.replicas | default('N/A') }}
+      when: r_deployment_status is defined and r_deployment_status.resources | default([]) | length > 0
+
+    # Verify the configuration by getting the updated deployment
+    - name: Verify - Get updated deployment
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        namespace: "{{ ocp4_days_workload_aws_cli_showroom_namespace }}"
+        name: "{{ _showroom_deployment_name }}"
+      register: r_final_deployment
+
+    - name: Verify - Check final configuration
+      set_fact:
+        _final_volumes: "{{ r_final_deployment.resources[0].spec.template.spec.volumes | map(attribute='name') | list }}"
+        _final_terminal: "{{ r_final_deployment.resources[0].spec.template.spec.containers | selectattr('name', 'equalto', 'terminal') | first }}"
+
+    - name: Debug - Final verification
+      debug:
+        msg: |
+          === FINAL VERIFICATION ===
+          Volume 'aws-credentials' present: {{ 'aws-credentials' in _final_volumes }}
+          Mount '/opt/aws' present: {{ _final_terminal.volumeMounts | default([]) | selectattr('mountPath', 'equalto', '/opt/aws') | list | length > 0 }}
+          AWS_CONFIG_FILE env var present: {{ _final_terminal.env | default([]) | selectattr('name', 'equalto', 'AWS_CONFIG_FILE') | list | length > 0 }}
+          AWS_SHARED_CREDENTIALS_FILE env var present: {{ _final_terminal.env | default([]) | selectattr('name', 'equalto', 'AWS_SHARED_CREDENTIALS_FILE') | list | length > 0 }}
 
     - name: AWS credentials configured via Kubernetes Secret
       debug:
-        msg: "AWS credentials mounted at /opt/aws via Kubernetes Secret. Credentials will persist across pod restarts."
-      when:
-        - _showroom_deployment_name | default('') | length > 0
-        - sandbox_aws_access_key_id | default('') | length > 0
+        msg: |
+          SUCCESS: AWS credentials configured via Kubernetes Secret
+          - Credentials mounted at /opt/aws
+          - Credentials will persist across pod restarts
+          - To verify: Run 'aws sts get-caller-identity' in the showroom terminal
 
 # Leave this as the last task in the playbook
 - name: Workload tasks complete
