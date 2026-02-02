@@ -145,24 +145,49 @@
       when: (r_showroom_pods.resources | default([]) | length > 0) or
             (r_showroom_pods_alt.resources | default([]) | length > 0)
 
-    - name: Set showroom pod name and container
+    - name: Set showroom pod name
       set_fact:
         _showroom_pod_name: "{{ _showroom_pod.metadata.name | default('') }}"
-        _showroom_container_name: >-
-          {{ _showroom_pod.spec.containers[0].name | default('showroom')
-             if _showroom_pod.spec.containers | default([]) | length > 0
-             else 'showroom' }}
+        _showroom_all_containers: "{{ _showroom_pod.spec.containers | default([]) | map(attribute='name') | list }}"
       when: _showroom_pod | default({}) | length > 0
 
+    # Look for a terminal container - these are the ones that have bash/shell
+    - name: Find terminal container
+      set_fact:
+        _showroom_container_name: >-
+          {{ item }}
+      when:
+        - _showroom_pod | default({}) | length > 0
+        - item in _showroom_all_containers | default([])
+      loop:
+        - terminal
+        - wetty
+        - ttyd
+        - showroom-terminal
+
+    # If no terminal container found, the pod mode won't work
     - name: Warn if showroom pod not found
       debug:
         msg: "WARNING: Could not find showroom pod in namespace {{ ocp4_days_workload_aws_cli_showroom_namespace }}. Skipping AWS CLI configuration."
       when: _showroom_pod_name | default('') | length == 0
 
+    - name: Warn if no terminal container found
+      debug:
+        msg: >-
+          WARNING: Showroom pod {{ _showroom_pod_name }} does not have a terminal container
+          (found containers: {{ _showroom_all_containers | join(', ') }}).
+          Pod mode requires a terminal container (terminal, wetty, ttyd, showroom-terminal).
+          Skipping AWS CLI configuration in pod. Consider using bastion mode instead.
+      when:
+        - _showroom_pod_name | default('') | length > 0
+        - _showroom_container_name | default('') | length == 0
+
     - name: Debug showroom pod info
       debug:
-        msg: "Found showroom pod {{ _showroom_pod_name }} with container {{ _showroom_container_name }}"
-      when: _showroom_pod_name | default('') | length > 0
+        msg: "Found showroom pod {{ _showroom_pod_name }} with terminal container {{ _showroom_container_name }}"
+      when:
+        - _showroom_pod_name | default('') | length > 0
+        - _showroom_container_name | default('') | length > 0
 
     - name: Install AWS CLI in showroom pod
       kubernetes.core.k8s_exec:
@@ -180,7 +205,9 @@
             echo "export PATH=\$PATH:~/.local/bin" >> ~/.bashrc
           fi
           '
-      when: _showroom_pod_name | default('') | length > 0
+      when:
+        - _showroom_pod_name | default('') | length > 0
+        - _showroom_container_name | default('') | length > 0
 
     - name: Configure AWS credentials in showroom pod
       kubernetes.core.k8s_exec:
@@ -205,6 +232,7 @@
           '
       when:
         - _showroom_pod_name | default('') | length > 0
+        - _showroom_container_name | default('') | length > 0
         - sandbox_aws_access_key_id | default('') | length > 0
         - sandbox_aws_secret_access_key | default('') | length > 0
       no_log: true
