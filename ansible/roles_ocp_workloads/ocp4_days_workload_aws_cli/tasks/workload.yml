@@ -56,22 +56,26 @@
         msg: "AWS CLI installed: {{ r_aws_version.stdout }}"
 
 # =============================================================================
-# CONFIGURE AWS CREDENTIALS
+# CONFIGURE AWS CREDENTIALS FOR ALL USERS
 # =============================================================================
-- name: Configure AWS credentials for {{ student_name }}
-  become_user: "{{ student_name }}"
-  become: true
+- name: Configure AWS credentials for bastion users
   when:
+    - ocp4_days_workload_aws_cli_bastion_mode | default(true) | bool
     - sandbox_aws_access_key_id | default('') | length > 0
     - sandbox_aws_secret_access_key | default('') | length > 0
   block:
-    - name: Create .aws directory
+    - name: Create .aws directory for each user
+      become_user: "{{ item }}"
+      become: true
       file:
         path: "~/.aws"
         state: directory
         mode: '0700'
+      loop: "{{ ocp4_days_workload_aws_cli_users }}"
 
-    - name: Add AWS credentials
+    - name: Add AWS credentials for each user
+      become_user: "{{ item }}"
+      become: true
       no_log: true
       copy:
         dest: "~/.aws/credentials"
@@ -80,8 +84,11 @@
           [default]
           aws_access_key_id={{ sandbox_aws_access_key_id }}
           aws_secret_access_key={{ sandbox_aws_secret_access_key }}
+      loop: "{{ ocp4_days_workload_aws_cli_users }}"
 
-    - name: Add AWS config
+    - name: Add AWS config for each user
+      become_user: "{{ item }}"
+      become: true
       copy:
         dest: "~/.aws/config"
         mode: '0600'
@@ -89,6 +96,7 @@
           [default]
           region={{ ocp4_days_workload_aws_cli_region }}
           output=json
+      loop: "{{ ocp4_days_workload_aws_cli_users }}"
 
     - name: Verify AWS credentials
       command: /usr/local/bin/aws sts get-caller-identity

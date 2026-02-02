@@ -13,8 +13,10 @@ ocp4_days_workload_aws_cli_showroom_namespace: "showroom-{{ guid | default('0000
 sandbox_aws_access_key_id: ""
 sandbox_aws_secret_access_key: ""
 
-# Student user for bastion mode
-student_name: lab-user
+# Users to configure AWS credentials for (bastion mode)
+ocp4_days_workload_aws_cli_users:
+  - lab-user
+  - "{{ student_name | default('demo-user') }}"
 
 # Installation modes
 ocp4_days_workload_aws_cli_bastion_mode: true
