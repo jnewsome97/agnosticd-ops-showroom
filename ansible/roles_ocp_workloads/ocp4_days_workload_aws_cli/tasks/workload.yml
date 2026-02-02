@@ -110,150 +110,175 @@
       when: r_aws_identity.rc == 0
 
 # =============================================================================
-# SHOWROOM POD MODE: Exec into showroom pod to install (alternative)
+# SHOWROOM POD MODE: Configure AWS credentials via Kubernetes Secret
 # =============================================================================
 - name: Install AWS CLI in showroom pod (container mode)
   when: ocp4_days_workload_aws_cli_pod_mode | default(false) | bool
   block:
-    - name: Get showroom pod name
-      kubernetes.core.k8s_info:
-        api_version: v1
-        kind: Pod
-        namespace: "{{ ocp4_days_workload_aws_cli_showroom_namespace }}"
-        label_selectors:
-          - app.kubernetes.io/name=showroom
-      register: r_showroom_pods
-
-    - name: Try alternative label if primary not found
-      kubernetes.core.k8s_info:
-        api_version: v1
-        kind: Pod
-        namespace: "{{ ocp4_days_workload_aws_cli_showroom_namespace }}"
-        label_selectors:
-          - app=showroom
-      register: r_showroom_pods_alt
-      when: r_showroom_pods.resources | length == 0
-
-    - name: Set showroom pod info
-      set_fact:
-        _showroom_pod: >-
-          {{ (r_showroom_pods.resources | default([]))[0]
-             if r_showroom_pods.resources | default([]) | length > 0
-             else (r_showroom_pods_alt.resources | default([]))[0]
-             if r_showroom_pods_alt.resources | default([]) | length > 0
-             else {} }}
-      when: (r_showroom_pods.resources | default([]) | length > 0) or
-            (r_showroom_pods_alt.resources | default([]) | length > 0)
-
-    - name: Set showroom pod name
-      set_fact:
-        _showroom_pod_name: "{{ _showroom_pod.metadata.name | default('') }}"
-        _showroom_all_containers: "{{ _showroom_pod.spec.containers | default([]) | map(attribute='name') | list }}"
-      when: _showroom_pod | default({}) | length > 0
-
-    # Look for a terminal container - these are the ones that have bash/shell
-    - name: Find terminal container
-      set_fact:
-        _showroom_container_name: >-
-          {{ item }}
+    # Create a Kubernetes Secret with AWS credentials
+    - name: Create AWS credentials secret
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: aws-credentials
+            namespace: "{{ ocp4_days_workload_aws_cli_showroom_namespace }}"
+          type: Opaque
+          stringData:
+            credentials: |
+              [default]
+              aws_access_key_id={{ sandbox_aws_access_key_id }}
+              aws_secret_access_key={{ sandbox_aws_secret_access_key }}
+            config: |
+              [default]
+              region={{ ocp4_days_workload_aws_cli_region }}
+              output=json
       when:
-        - _showroom_pod | default({}) | length > 0
-        - item in _showroom_all_containers | default([])
-      loop:
-        - terminal
-        - wetty
-        - ttyd
-        - showroom-terminal
-
-    # If no terminal container found, the pod mode won't work
-    - name: Warn if showroom pod not found
-      debug:
-        msg: "WARNING: Could not find showroom pod in namespace {{ ocp4_days_workload_aws_cli_showroom_namespace }}. Skipping AWS CLI configuration."
-      when: _showroom_pod_name | default('') | length == 0
-
-    - name: Warn if no terminal container found
-      debug:
-        msg: >-
-          WARNING: Showroom pod {{ _showroom_pod_name }} does not have a terminal container
-          (found containers: {{ _showroom_all_containers | join(', ') }}).
-          Pod mode requires a terminal container (terminal, wetty, ttyd, showroom-terminal).
-          Skipping AWS CLI configuration in pod. Consider using bastion mode instead.
-      when:
-        - _showroom_pod_name | default('') | length > 0
-        - _showroom_container_name | default('') | length == 0
-
-    - name: Debug showroom pod info
-      debug:
-        msg: "Found showroom pod {{ _showroom_pod_name }} with terminal container {{ _showroom_container_name }}"
-      when:
-        - _showroom_pod_name | default('') | length > 0
-        - _showroom_container_name | default('') | length > 0
-
-    # Wait for the pod to be ready before trying to exec
-    - name: Wait for showroom pod to be ready
-      kubernetes.core.k8s_info:
-        api_version: v1
-        kind: Pod
-        namespace: "{{ ocp4_days_workload_aws_cli_showroom_namespace }}"
-        name: "{{ _showroom_pod_name }}"
-      register: r_showroom_pod_status
-      until:
-        - r_showroom_pod_status.resources | length > 0
-        - r_showroom_pod_status.resources[0].status.phase == 'Running'
-        - r_showroom_pod_status.resources[0].status.containerStatuses is defined
-        - r_showroom_pod_status.resources[0].status.containerStatuses | selectattr('name', 'equalto', _showroom_container_name) | selectattr('ready', 'equalto', true) | list | length > 0
-      retries: 30
-      delay: 10
-      when:
-        - _showroom_pod_name | default('') | length > 0
-        - _showroom_container_name | default('') | length > 0
-
-    - name: Install AWS CLI in showroom pod
-      kubernetes.core.k8s_exec:
-        namespace: "{{ ocp4_days_workload_aws_cli_showroom_namespace }}"
-        pod: "{{ _showroom_pod_name }}"
-        container: "{{ _showroom_container_name }}"
-        command: >-
-          bash -c '
-          if ! command -v aws &> /dev/null; then
-            cd /tmp &&
-            curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" &&
-            unzip -q awscliv2.zip &&
-            ./aws/install -i /tmp/aws-cli -b /tmp/bin &&
-            rm -rf awscliv2.zip aws &&
-            echo "AWS CLI installed to /tmp/bin - add to PATH with: export PATH=\$PATH:/tmp/bin"
-          fi
-          '
-      when:
-        - _showroom_pod_name | default('') | length > 0
-        - _showroom_container_name | default('') | length > 0
-      ignore_errors: true
-
-    - name: Configure AWS credentials in showroom pod
-      kubernetes.core.k8s_exec:
-        namespace: "{{ ocp4_days_workload_aws_cli_showroom_namespace }}"
-        pod: "{{ _showroom_pod_name }}"
-        container: "{{ _showroom_container_name }}"
-        command: >-
-          bash -c 'mkdir -p /tmp/.aws &&
-          echo "[default]" > /tmp/.aws/credentials &&
-          echo "aws_access_key_id={{ sandbox_aws_access_key_id }}" >> /tmp/.aws/credentials &&
-          echo "aws_secret_access_key={{ sandbox_aws_secret_access_key }}" >> /tmp/.aws/credentials &&
-          chmod 600 /tmp/.aws/credentials &&
-          echo "[default]" > /tmp/.aws/config &&
-          echo "region={{ ocp4_days_workload_aws_cli_region }}" >> /tmp/.aws/config &&
-          echo "output=json" >> /tmp/.aws/config &&
-          chmod 600 /tmp/.aws/config &&
-          echo "export AWS_CONFIG_FILE=/tmp/.aws/config" > /tmp/aws-env.sh &&
-          echo "export AWS_SHARED_CREDENTIALS_FILE=/tmp/.aws/credentials" >> /tmp/aws-env.sh &&
-          chmod 755 /tmp/aws-env.sh'
-      when:
-        - _showroom_pod_name | default('') | length > 0
-        - _showroom_container_name | default('') | length > 0
         - sandbox_aws_access_key_id | default('') | length > 0
         - sandbox_aws_secret_access_key | default('') | length > 0
       no_log: true
-      ignore_errors: true
+
+    # Get the showroom deployment by name
+    - name: Get showroom deployment
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        namespace: "{{ ocp4_days_workload_aws_cli_showroom_namespace }}"
+        name: showroom
+      register: r_showroom_deployment
+
+    - name: Set deployment facts
+      set_fact:
+        _showroom_deployment_name: "{{ r_showroom_deployment.resources[0].metadata.name if r_showroom_deployment.resources | length > 0 else '' }}"
+        _existing_volumes: "{{ r_showroom_deployment.resources[0].spec.template.spec.volumes | default([]) | map(attribute='name') | list }}"
+        _deployment_spec: "{{ r_showroom_deployment.resources[0] if r_showroom_deployment.resources | length > 0 else {} }}"
+      when: r_showroom_deployment.resources | length > 0
+
+    - name: Debug deployment info
+      debug:
+        msg: "Found showroom deployment: {{ _showroom_deployment_name }}"
+      when: _showroom_deployment_name | default('') | length > 0
+
+    # Check if volume already exists
+    - name: Check if aws-credentials volume already exists
+      set_fact:
+        _volume_exists: "{{ 'aws-credentials' in _existing_volumes }}"
+      when: _showroom_deployment_name | default('') | length > 0
+
+    # Add volume only if it doesn't exist
+    - name: Add AWS credentials volume to deployment
+      kubernetes.core.k8s_json_patch:
+        api_version: apps/v1
+        kind: Deployment
+        namespace: "{{ ocp4_days_workload_aws_cli_showroom_namespace }}"
+        name: "{{ _showroom_deployment_name }}"
+        patch:
+          - op: add
+            path: /spec/template/spec/volumes/-
+            value:
+              name: aws-credentials
+              secret:
+                secretName: aws-credentials
+                defaultMode: 420
+      when:
+        - _showroom_deployment_name | default('') | length > 0
+        - sandbox_aws_access_key_id | default('') | length > 0
+        - not _volume_exists | default(false)
+      register: r_volume_patch
+
+    # Find the terminal container index
+    - name: Find terminal container index
+      set_fact:
+        _terminal_container_index: "{{ idx }}"
+        _terminal_container: "{{ item }}"
+      loop: "{{ _deployment_spec.spec.template.spec.containers | default([]) }}"
+      loop_control:
+        index_var: idx
+      when:
+        - _showroom_deployment_name | default('') | length > 0
+        - item.name == 'terminal'
+
+    # Check if volume mount already exists
+    - name: Check if aws-credentials volume mount already exists
+      set_fact:
+        _mount_exists: "{{ _terminal_container.volumeMounts | default([]) | selectattr('name', 'equalto', 'aws-credentials') | list | length > 0 }}"
+        _env_config_exists: "{{ _terminal_container.env | default([]) | selectattr('name', 'equalto', 'AWS_CONFIG_FILE') | list | length > 0 }}"
+      when:
+        - _terminal_container_index is defined
+        - _terminal_container is defined
+
+    # Add volume mount only if it doesn't exist
+    - name: Add volume mount to terminal container
+      kubernetes.core.k8s_json_patch:
+        api_version: apps/v1
+        kind: Deployment
+        namespace: "{{ ocp4_days_workload_aws_cli_showroom_namespace }}"
+        name: "{{ _showroom_deployment_name }}"
+        patch:
+          - op: add
+            path: "/spec/template/spec/containers/{{ _terminal_container_index }}/volumeMounts/-"
+            value:
+              name: aws-credentials
+              mountPath: /opt/aws
+              readOnly: true
+      when:
+        - _showroom_deployment_name | default('') | length > 0
+        - _terminal_container_index is defined
+        - sandbox_aws_access_key_id | default('') | length > 0
+        - not _mount_exists | default(false)
+      register: r_mount_patch
+
+    # Add env vars only if they don't exist
+    - name: Add AWS environment variables to terminal container
+      kubernetes.core.k8s_json_patch:
+        api_version: apps/v1
+        kind: Deployment
+        namespace: "{{ ocp4_days_workload_aws_cli_showroom_namespace }}"
+        name: "{{ _showroom_deployment_name }}"
+        patch:
+          - op: add
+            path: "/spec/template/spec/containers/{{ _terminal_container_index }}/env/-"
+            value:
+              name: AWS_CONFIG_FILE
+              value: /opt/aws/config
+          - op: add
+            path: "/spec/template/spec/containers/{{ _terminal_container_index }}/env/-"
+            value:
+              name: AWS_SHARED_CREDENTIALS_FILE
+              value: /opt/aws/credentials
+      when:
+        - _showroom_deployment_name | default('') | length > 0
+        - _terminal_container_index is defined
+        - sandbox_aws_access_key_id | default('') | length > 0
+        - not _env_config_exists | default(false)
+      register: r_env_patch
+
+    # Wait for deployment rollout only if changes were made
+    - name: Wait for deployment rollout
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        namespace: "{{ ocp4_days_workload_aws_cli_showroom_namespace }}"
+        name: "{{ _showroom_deployment_name }}"
+      register: r_deployment_status
+      until:
+        - r_deployment_status.resources[0].status.readyReplicas is defined
+        - r_deployment_status.resources[0].status.readyReplicas == r_deployment_status.resources[0].status.replicas
+      retries: 30
+      delay: 10
+      when:
+        - _showroom_deployment_name | default('') | length > 0
+        - _terminal_container_index is defined
+        - r_volume_patch.changed | default(false) or r_mount_patch.changed | default(false) or r_env_patch.changed | default(false)
+
+    - name: AWS credentials configured via Kubernetes Secret
+      debug:
+        msg: "AWS credentials mounted at /opt/aws via Kubernetes Secret. Credentials will persist across pod restarts."
+      when:
+        - _showroom_deployment_name | default('') | length > 0
+        - sandbox_aws_access_key_id | default('') | length > 0
 
 # Leave this as the last task in the playbook
 - name: Workload tasks complete
