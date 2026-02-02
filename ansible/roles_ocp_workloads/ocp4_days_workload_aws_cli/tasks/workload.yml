@@ -134,27 +134,41 @@
       register: r_showroom_pods_alt
       when: r_showroom_pods.resources | length == 0
 
-    - name: Set showroom pod name
+    - name: Set showroom pod info
       set_fact:
-        _showroom_pod_name: >-
-          {{ (r_showroom_pods.resources | default([]))[0].metadata.name
+        _showroom_pod: >-
+          {{ (r_showroom_pods.resources | default([]))[0]
              if r_showroom_pods.resources | default([]) | length > 0
-             else (r_showroom_pods_alt.resources | default([]))[0].metadata.name
+             else (r_showroom_pods_alt.resources | default([]))[0]
              if r_showroom_pods_alt.resources | default([]) | length > 0
-             else '' }}
+             else {} }}
       when: (r_showroom_pods.resources | default([]) | length > 0) or
             (r_showroom_pods_alt.resources | default([]) | length > 0)
+
+    - name: Set showroom pod name and container
+      set_fact:
+        _showroom_pod_name: "{{ _showroom_pod.metadata.name | default('') }}"
+        _showroom_container_name: >-
+          {{ _showroom_pod.spec.containers[0].name | default('showroom')
+             if _showroom_pod.spec.containers | default([]) | length > 0
+             else 'showroom' }}
+      when: _showroom_pod | default({}) | length > 0
 
     - name: Warn if showroom pod not found
       debug:
         msg: "WARNING: Could not find showroom pod in namespace {{ ocp4_days_workload_aws_cli_showroom_namespace }}. Skipping AWS CLI configuration."
       when: _showroom_pod_name | default('') | length == 0
 
+    - name: Debug showroom pod info
+      debug:
+        msg: "Found showroom pod {{ _showroom_pod_name }} with container {{ _showroom_container_name }}"
+      when: _showroom_pod_name | default('') | length > 0
+
     - name: Install AWS CLI in showroom pod
       kubernetes.core.k8s_exec:
         namespace: "{{ ocp4_days_workload_aws_cli_showroom_namespace }}"
         pod: "{{ _showroom_pod_name }}"
-        container: terminal
+        container: "{{ _showroom_container_name }}"
         command: >-
           bash -c '
           if ! command -v aws &> /dev/null; then
@@ -172,7 +186,7 @@
       kubernetes.core.k8s_exec:
         namespace: "{{ ocp4_days_workload_aws_cli_showroom_namespace }}"
         pod: "{{ _showroom_pod_name }}"
-        container: terminal
+        container: "{{ _showroom_container_name }}"
         command: >-
           bash -c '
           mkdir -p ~/.aws &&
