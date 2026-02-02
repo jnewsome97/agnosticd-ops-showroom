@@ -234,21 +234,15 @@
         pod: "{{ _showroom_pod_name }}"
         container: "{{ _showroom_container_name }}"
         command: >-
-          bash -c '
-          mkdir -p ~/.aws &&
-          cat > ~/.aws/credentials << EOF
-          [default]
-          aws_access_key_id={{ sandbox_aws_access_key_id }}
-          aws_secret_access_key={{ sandbox_aws_secret_access_key }}
-          EOF
+          bash -c 'mkdir -p ~/.aws &&
+          echo "[default]" > ~/.aws/credentials &&
+          echo "aws_access_key_id={{ sandbox_aws_access_key_id }}" >> ~/.aws/credentials &&
+          echo "aws_secret_access_key={{ sandbox_aws_secret_access_key }}" >> ~/.aws/credentials &&
           chmod 600 ~/.aws/credentials &&
-          cat > ~/.aws/config << EOF
-          [default]
-          region={{ ocp4_days_workload_aws_cli_region }}
-          output=json
-          EOF
-          chmod 600 ~/.aws/config
-          '
+          echo "[default]" > ~/.aws/config &&
+          echo "region={{ ocp4_days_workload_aws_cli_region }}" >> ~/.aws/config &&
+          echo "output=json" >> ~/.aws/config &&
+          chmod 600 ~/.aws/config'
       when:
         - _showroom_pod_name | default('') | length > 0
         - _showroom_container_name | default('') | length > 0
