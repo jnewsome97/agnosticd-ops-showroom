@@ -40,22 +40,7 @@
       - "State: {{ r_subscription.resources[0].status.state | default('unknown') }}"
   when: r_subscription.resources | length > 0
 
-- name: Create OperatorGroup for Compliance Operator
-  kubernetes.core.k8s:
-    state: present
-    definition:
-      apiVersion: operators.coreos.com/v1
-      kind: OperatorGroup
-      metadata:
-        name: compliance-operator
-        namespace: "{{ ocp4_days_workload_compliance_operator_namespace }}"
-      spec:
-        targetNamespaces:
-          - "{{ ocp4_days_workload_compliance_operator_namespace }}"
-  register: r_operatorgroup
-  until: r_operatorgroup is successful
-  retries: 10
-  delay: 5
+# NOTE: OperatorGroup is created by install_operator role - do not duplicate
 
 - name: Wait for Compliance Operator deployment to be ready
   kubernetes.core.k8s_info:
