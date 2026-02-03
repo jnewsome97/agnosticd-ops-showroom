@@ -1,0 +1,75 @@
+---
+- name: Setting up Compliance Operator workload
+  ansible.builtin.debug:
+    msg: "Setting up Compliance Operator workload"
+
+- name: Install Compliance Operator
+  ansible.builtin.include_role:
+    name: install_operator
+  vars:
+    install_operator_action: install
+    install_operator_name: compliance-operator
+    install_operator_namespace: "{{ ocp4_days_workload_compliance_operator_namespace }}"
+    install_operator_channel: "{{ ocp4_days_workload_compliance_operator_channel }}"
+    install_operator_automatic_install_plan_approval: "{{ ocp4_days_workload_compliance_operator_automatic_install_plan_approval }}"
+    install_operator_use_catalog_snapshot: "{{ ocp4_days_workload_compliance_operator_use_catalog_snapshot }}"
+    install_operator_catalogsource_name: "{{ ocp4_days_workload_compliance_operator_catalogsource_name }}"
+    install_operator_catalogsource_image: "{{ ocp4_days_workload_compliance_operator_catalog_snapshot_image }}"
+    install_operator_catalogsource_image_tag: "{{ ocp4_days_workload_compliance_operator_catalog_snapshot_image_tag }}"
+
+- name: Create OperatorGroup for Compliance Operator
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: operators.coreos.com/v1
+      kind: OperatorGroup
+      metadata:
+        name: compliance-operator
+        namespace: "{{ ocp4_days_workload_compliance_operator_namespace }}"
+      spec:
+        targetNamespaces:
+          - "{{ ocp4_days_workload_compliance_operator_namespace }}"
+  register: r_operatorgroup
+  until: r_operatorgroup is successful
+  retries: 10
+  delay: 5
+
+- name: Wait for Compliance Operator deployment to be ready
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: compliance-operator
+    namespace: "{{ ocp4_days_workload_compliance_operator_namespace }}"
+  register: r_deployment
+  until:
+    - r_deployment.resources | length > 0
+    - r_deployment.resources[0].status.readyReplicas is defined
+    - r_deployment.resources[0].status.readyReplicas | int >= 1
+  retries: 60
+  delay: 10
+
+- name: Wait for ProfileBundle CRDs to be available
+  kubernetes.core.k8s_info:
+    api_version: apiextensions.k8s.io/v1
+    kind: CustomResourceDefinition
+    name: profilebundles.compliance.openshift.io
+  register: r_crd
+  until: r_crd.resources | length > 0
+  retries: 30
+  delay: 10
+
+- name: Wait for ProfileBundles to be parsed
+  kubernetes.core.k8s_info:
+    api_version: compliance.openshift.io/v1alpha1
+    kind: ProfileBundle
+    namespace: "{{ ocp4_days_workload_compliance_operator_namespace }}"
+  register: r_profilebundles
+  until:
+    - r_profilebundles.resources | length >= 2
+    - r_profilebundles.resources | selectattr('status.dataStreamStatus', 'defined') | selectattr('status.dataStreamStatus', 'equalto', 'VALID') | list | length >= 2
+  retries: 60
+  delay: 10
+
+- name: Compliance Operator installation complete
+  ansible.builtin.debug:
+    msg: "Compliance Operator installed successfully. ProfileBundles are ready."
