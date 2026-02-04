@@ -17,6 +17,9 @@
     install_operator_action: install
     install_operator_name: compliance-operator
     install_operator_namespace: "{{ ocp4_days_workload_compliance_operator_namespace }}"
+    # OwnNamespace mode - prevents CSV from being copied to all 100+ namespaces
+    install_operator_manage_namespaces:
+      - "{{ ocp4_days_workload_compliance_operator_namespace }}"
     install_operator_channel: "{{ ocp4_days_workload_compliance_operator_channel }}"
     install_operator_automatic_install_plan_approval: "{{ ocp4_days_workload_compliance_operator_automatic_install_plan_approval }}"
     install_operator_use_catalog_snapshot: "{{ ocp4_days_workload_compliance_operator_use_catalog_snapshot }}"

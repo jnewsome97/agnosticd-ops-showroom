@@ -34,6 +34,9 @@
     install_operator_action: install
     install_operator_name: rhdh
     install_operator_namespace: "{{ ocp4_days_workload_rhdh_operator_namespace }}"
+    # OwnNamespace mode - prevents CSV from being copied to all 100+ namespaces
+    install_operator_manage_namespaces:
+      - "{{ ocp4_days_workload_rhdh_operator_namespace }}"
     install_operator_channel: "{{ ocp4_days_workload_rhdh_channel }}"
     install_operator_catalog: redhat-operators
     install_operator_automatic_install_plan_approval: "{{ ocp4_days_workload_rhdh_automatic_install_plan_approval }}"
