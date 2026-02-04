@@ -1,13 +1,4 @@
 ---
-- name: DEBUG - Starting OpenShift GitOps workload
-  ansible.builtin.debug:
-    msg:
-      - "Starting OpenShift GitOps workload installation"
-      - "Channel: {{ ocp4_workload_openshift_gitops_channel }}"
-      - "Use Catalog Snapshot: {{ ocp4_workload_openshift_gitops_use_catalog_snapshot | default(false) }}"
-      - "Setup Cluster Admin: {{ ocp4_workload_openshift_gitops_setup_cluster_admin | default(false) }}"
-      - "Install CLI: {{ ocp4_workload_openshift_gitops_install_cli | default(false) }}"
-
 - name: Get IngressController
   kubernetes.core.k8s_info:
     api_version: operator.openshift.io/v1
@@ -19,10 +10,6 @@
 - name: Set _ocp4_workload_openshift_gitops_domain
   ansible.builtin.set_fact:
     _ocp4_workload_openshift_gitops_domain: "{{ r_ingress_controller.resources[0].status.domain }}"
-
-- name: DEBUG - Domain set
-  ansible.builtin.debug:
-    msg: "Ingress domain: {{ _ocp4_workload_openshift_gitops_domain }}"
 
 - name: Install OpenShift GitOps operator
   ansible.builtin.include_role:
@@ -49,14 +36,6 @@
     namespace: openshift-operators
   register: r_gitops_subscription
 
-- name: DEBUG - Subscription status
-  ansible.builtin.debug:
-    msg:
-      - "Subscription found: {{ r_gitops_subscription.resources | length > 0 }}"
-      - "Installed CSV: {{ r_gitops_subscription.resources[0].status.installedCSV | default('not yet') }}"
-      - "State: {{ r_gitops_subscription.resources[0].status.state | default('unknown') }}"
-  when: r_gitops_subscription.resources | length > 0
-
 - name: Get CSV status
   kubernetes.core.k8s_info:
     api_version: operators.coreos.com/v1alpha1
@@ -65,14 +44,6 @@
     label_selectors:
       - "operators.coreos.com/openshift-gitops-operator.openshift-operators"
   register: r_gitops_csv
-
-- name: DEBUG - CSV status
-  ansible.builtin.debug:
-    msg:
-      - "CSV Name: {{ r_gitops_csv.resources[0].metadata.name | default('not found') }}"
-      - "CSV Phase: {{ r_gitops_csv.resources[0].status.phase | default('unknown') }}"
-      - "CSV Version: {{ r_gitops_csv.resources[0].spec.version | default('unknown') }}"
-  when: r_gitops_csv.resources | length > 0
 
 - name: Grant cluster-admin permissions to Gitops Service account
   when: ocp4_workload_openshift_gitops_setup_cluster_admin | bool
@@ -84,10 +55,6 @@
   when: not (ocp4_workload_openshift_gitops_channel == "stable" or ocp4_workload_openshift_gitops_channel is version_compare("gitops-1.13", ">="))
   ansible.builtin.set_fact:
     _ocp4_workload_openshift_gitops_api_version: v1alpha1
-
-- name: Debug version
-  ansible.builtin.debug:
-    msg: "API Version: {{ ocp4_workload_openshift_gitops_api_version }}"
 
 - name: Wait until openshift-gitops ArgoCD instance has been created
   kubernetes.core.k8s_info:
@@ -103,25 +70,12 @@
   - r_openshift_gitops.resources is defined
   - r_openshift_gitops.resources | length == 1
 
-- name: DEBUG - ArgoCD instance status
-  ansible.builtin.debug:
-    msg:
-      - "ArgoCD instance found: {{ r_openshift_gitops.resources | length > 0 }}"
-      - "ArgoCD phase: {{ r_openshift_gitops.resources[0].status.phase | default('unknown') }}"
-  when: r_openshift_gitops.resources | length > 0
-
 - name: Get pods in openshift-gitops namespace
   kubernetes.core.k8s_info:
     api_version: v1
     kind: Pod
     namespace: openshift-gitops
   register: r_gitops_pods
-
-- name: DEBUG - GitOps pods
-  ansible.builtin.debug:
-    msg:
-      - "Pods in openshift-gitops: {{ r_gitops_pods.resources | map(attribute='metadata.name') | list }}"
-      - "Pod count: {{ r_gitops_pods.resources | length }}"
 
 - name: Create the kustomize-envvar plugin configmap
   when: ocp4_workload_openshift_gitops_kustomize_plugin | bool
@@ -145,11 +99,6 @@
       namespace: openshift-gitops
     register: r_openshift_gitops_server_route
 
-  - name: DEBUG - ArgoCD route
-    ansible.builtin.debug:
-      msg: "ArgoCD Route: https://{{ r_openshift_gitops_server_route.resources[0].spec.host | default('not found') }}"
-    when: r_openshift_gitops_server_route.resources | length > 0
-
   - name: Try to install the ArgoCD CLI
     become: true
     ansible.builtin.get_url:
@@ -163,12 +112,6 @@
     retries: 5
     delay: 5
     ignore_errors: true
-
-- name: DEBUG - Installation complete
-  ansible.builtin.debug:
-    msg:
-      - "OpenShift GitOps installation complete"
-      - "ArgoCD URL: https://openshift-gitops-server-openshift-gitops.{{ _ocp4_workload_openshift_gitops_domain }}"
 
 # yamllint disable rule:line-length
 - name: project information
