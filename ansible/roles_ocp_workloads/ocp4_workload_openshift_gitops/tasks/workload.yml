@@ -28,23 +28,6 @@
     install_operator_catalogsource_image: "{{ ocp4_workload_openshift_gitops_catalog_snapshot_image | default('') }}"
     install_operator_catalogsource_image_tag: "{{ ocp4_workload_openshift_gitops_catalog_snapshot_image_tag | default('') }}"
 
-- name: Get Subscription status
-  kubernetes.core.k8s_info:
-    api_version: operators.coreos.com/v1alpha1
-    kind: Subscription
-    name: openshift-gitops-operator
-    namespace: openshift-operators
-  register: r_gitops_subscription
-
-- name: Get CSV status
-  kubernetes.core.k8s_info:
-    api_version: operators.coreos.com/v1alpha1
-    kind: ClusterServiceVersion
-    namespace: openshift-operators
-    label_selectors:
-      - "operators.coreos.com/openshift-gitops-operator.openshift-operators"
-  register: r_gitops_csv
-
 - name: Grant cluster-admin permissions to Gitops Service account
   when: ocp4_workload_openshift_gitops_setup_cluster_admin | bool
   kubernetes.core.k8s:
@@ -55,6 +38,10 @@
   when: not (ocp4_workload_openshift_gitops_channel == "stable" or ocp4_workload_openshift_gitops_channel is version_compare("gitops-1.13", ">="))
   ansible.builtin.set_fact:
     _ocp4_workload_openshift_gitops_api_version: v1alpha1
+
+- name: Debug version
+  ansible.builtin.debug:
+    msg: "API Version: {{ ocp4_workload_openshift_gitops_api_version }}"
 
 - name: Wait until openshift-gitops ArgoCD instance has been created
   kubernetes.core.k8s_info:
@@ -69,13 +56,6 @@
   - r_openshift_gitops is defined
   - r_openshift_gitops.resources is defined
   - r_openshift_gitops.resources | length == 1
-
-- name: Get pods in openshift-gitops namespace
-  kubernetes.core.k8s_info:
-    api_version: v1
-    kind: Pod
-    namespace: openshift-gitops
-  register: r_gitops_pods
 
 - name: Create the kustomize-envvar plugin configmap
   when: ocp4_workload_openshift_gitops_kustomize_plugin | bool
