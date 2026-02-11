@@ -26,6 +26,13 @@
   delay: 10
   until: r_worker_nodes.resources | length > 2
 
+- name: Report worker node discovery progress
+  ansible.builtin.debug:
+    msg: >-
+      Found {{ r_worker_nodes.resources | length }} worker nodes:
+      {{ r_worker_nodes.resources | map(attribute='metadata.name') | list | join(', ') }}.
+      Attempts: {{ r_worker_nodes.attempts | default('1') }}.
+
 - name: Fail for less than 3 worker nodes
   ansible.builtin.assert:
     that: r_worker_nodes.resources | length > 2
