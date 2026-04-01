@@ -84,6 +84,32 @@
       name: "{{ ocp4_workload_windows_node_windows_ami_filter }}"
   register: wami_fact
 
+- name: Debug AMI lookup parameters
+  debug:
+    msg: "Filter: '{{ ocp4_workload_windows_node_windows_ami_filter }}' | Owner: '{{ ocp4_workload_windows_node_windows_ami_owner }}' | Region: '{{ cluster_region }}'"
+  ignore_errors: true
+
+- name: Debug AMI lookup results
+  debug:
+    msg: "Found {{ (wami_fact.images | default([])) | length }} AMI(s): {{ (wami_fact.images | default([])) | map(attribute='name') | list }}"
+  ignore_errors: true
+
+- name: List all available AMIs from owner for debugging
+  ec2_ami_info:
+    region: "{{ cluster_region }}"
+    aws_access_key: "{{ ocp_access_key }}"
+    aws_secret_key: "{{ ocp_secret_key }}"
+    owners: "{{ ocp4_workload_windows_node_windows_ami_owner }}"
+  register: wami_all
+  ignore_errors: true
+  when: (wami_fact.images | default([])) | length == 0
+
+- name: Debug all available AMIs from owner
+  debug:
+    msg: "All AMIs from owner {{ ocp4_workload_windows_node_windows_ami_owner }} in {{ cluster_region }}: {{ (wami_all.images | default([])) | map(attribute='name') | list }}"
+  ignore_errors: true
+  when: (wami_fact.images | default([])) | length == 0
+
 # Get the latest Windows Server 2019 with Containers AMI
 - name: Set the latest Windows Server 2019 with Containers AMI as a fact for later use
   set_fact:
